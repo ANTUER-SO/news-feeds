@@ -27,9 +27,9 @@ USER_AGENT = (
 )
 
 FEEDS = {
-    "textil": {"url": "https://www.textilwirtschaft.de/feed", "limit": 5, "og_images": True},
-    "ntv":    {"url": "https://www.n-tv.de/rss", "limit": 5},
-    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 15},
+    "textil": {"url": "https://www.textilwirtschaft.de/feed", "limit": 10, "og_images": True},
+    "ntv":    {"url": "https://www.n-tv.de/rss", "limit": 15},
+    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 20},
 }
 
 
