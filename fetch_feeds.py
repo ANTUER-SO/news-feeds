@@ -29,7 +29,7 @@ USER_AGENT = (
 FEEDS = {
     "textil": {"url": "https://www.textilwirtschaft.de/feed", "limit": 10, "og_images": True},
     "ntv":    {"url": "https://www.n-tv.de/rss", "limit": 15},
-    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 20},
+    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 20, "sort_traffic": True},
 }
 
 
@@ -117,8 +117,22 @@ def og_image(url):
     return ""
 
 
+def traffic_value(text):
+    """'1000+' -> 1000, '20K+' -> 20000, '1M+' -> 1000000, '10.000+' -> 10000"""
+    m = re.search(r"([\d.,]+)\s*([KkMm]?)", text or "")
+    if not m:
+        return 0
+    num = m.group(1).replace(".", "").replace(",", "")
+    factor = {"k": 1_000, "m": 1_000_000}.get(m.group(2).lower(), 1)
+    return int(num or 0) * factor
+
+
 def load_feed(name, cfg):
-    items = parse_feed(fetch(cfg["url"]))[: cfg["limit"]]
+    items = parse_feed(fetch(cfg["url"]))
+    if cfg.get("sort_traffic"):
+        # Nach Suchvolumen absteigend ("1000+" vor "500+"); bei Gleichstand bleibt Googles Reihenfolge
+        items.sort(key=lambda it: -traffic_value(it["traffic"]))
+    items = items[: cfg["limit"]]
     if not items:
         raise ValueError("Feed enthält keine Einträge")
     if cfg.get("og_images"):
