@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else "feeds.json")
@@ -29,7 +30,10 @@ USER_AGENT = (
 FEEDS = {
     "textil": {"url": "https://www.textilwirtschaft.de/feed", "limit": 10, "og_images": True},
     "ntv":    {"url": "https://www.n-tv.de/rss", "limit": 15},
-    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 20, "sort_traffic": True},
+    # top24h: echte Top-Liste wie auf trends.google.de (24 Std., nach Suchvolumen).
+    # Klappt das nicht, wird automatisch der RSS-Feed (url) genommen.
+    "trends": {"url": "https://trends.google.com/trending/rss?geo=DE", "limit": 20,
+               "sort_traffic": True, "top24h": {"geo": "DE", "hours": 24}},
 }
 
 
@@ -127,7 +131,75 @@ def traffic_value(text):
     return int(num or 0) * factor
 
 
+# ------------------------------------------------------------------
+# Google Trends "Aktuelle Trends" – dieselbe Liste wie auf der Webseite.
+# Inoffizielle, interne Schnittstelle der Trends-Webseite (kann sich ändern).
+# ------------------------------------------------------------------
+def fmt_volume(v):
+    return f"{v:,}".replace(",", ".") + "+"
+
+
+def parse_trends_response(text):
+    """Antwort von batchexecute -> Liste {title, volume}."""
+    data = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and '"wrb.fr"' in line:
+            for entry in json.loads(line):
+                if isinstance(entry, list) and len(entry) > 2 and entry[0] == "wrb.fr" and entry[2]:
+                    data = json.loads(entry[2])
+                    break
+        if data is not None:
+            break
+    if data is None:
+        raise ValueError("keine Trenddaten in der Antwort")
+
+    rows = data[1] if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list) else data
+    out = []
+    for row in rows:
+        if not isinstance(row, list) or not row or not isinstance(row[0], str):
+            continue
+        volume = row[6] if len(row) > 6 and isinstance(row[6], int) else 0
+        out.append({"title": row[0], "volume": volume})
+    if not out or not any(it["volume"] for it in out):
+        raise ValueError(f"unerwartetes Format, erster Eintrag: {json.dumps(rows[:1])[:400]}")
+    return out
+
+
+def fetch_trends_top(geo="DE", hours=24):
+    rpc = json.dumps([[["i0OFE", json.dumps([None, None, geo, 0, "de", hours, 1]), None, "generic"]]])
+    req = Request(
+        "https://trends.google.com/_/TrendsUi/data/batchexecute?hl=de",
+        data=urlencode({"f.req": rpc}).encode(),
+        headers={
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "Accept-Language": "de-DE,de;q=0.9",
+        },
+    )
+    with urlopen(req, timeout=TIMEOUT) as resp:
+        text = resp.read().decode("utf-8", "ignore")
+    trends = parse_trends_response(text)
+    trends.sort(key=lambda t: -t["volume"])
+    return [{
+        "title": t["title"],
+        "link": "",
+        "summary": "",
+        "image": "",
+        "date": "",
+        "traffic": fmt_volume(t["volume"]) if t["volume"] else "",
+    } for t in trends]
+
+
 def load_feed(name, cfg):
+    if cfg.get("top24h"):
+        try:
+            items = fetch_trends_top(**cfg["top24h"])[: cfg["limit"]]
+            print(f"  {name}: Top-Liste (24 Std., nach Suchvolumen)")
+            return items
+        except Exception as e:
+            print(f"  {name}: Top-Liste nicht verfügbar ({type(e).__name__}: {e}) -> RSS-Feed")
+
     items = parse_feed(fetch(cfg["url"]))
     if cfg.get("sort_traffic"):
         # Nach Suchvolumen absteigend ("1000+" vor "500+"); bei Gleichstand bleibt Googles Reihenfolge
