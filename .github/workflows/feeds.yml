@@ -1,0 +1,44 @@
+name: Feeds aktualisieren
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # alle 15 Minuten (GitHub kann sich ein paar Minuten verspäten)
+  workflow_dispatch:          # zusätzlich per Knopfdruck startbar
+
+permissions:
+  contents: write
+
+concurrency:
+  group: feeds
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Letzten Stand holen, damit bei einem Ausfall die alten Daten erhalten bleiben
+      - name: Vorherige feeds.json laden
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/data/feeds.json" -o previous.json || echo '{}' > previous.json
+
+      - name: Feeds abrufen
+        run: python fetch_feeds.py out/feeds.json previous.json
+
+      # Ergebnis auf den Branch "data" schreiben – immer nur ein einziger Commit,
+      # damit das Repository nicht mit jedem Lauf wächst
+      - name: Auf Branch "data" veröffentlichen
+        run: |
+          cd out
+          git init -q -b data
+          git config user.name  "feeds-bot"
+          git config user.email "feeds-bot@users.noreply.github.com"
+          git add feeds.json
+          git commit -q -m "Feeds $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data
